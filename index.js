@@ -1,42 +1,32 @@
-require(‘dotenv’).config();
-const express = require(‘express’);
-const http = require(‘http’);
-const { Server } = require(‘socket.io’);
-const mongoose = require(‘mongoose’);
-const cors = require(‘cors’);
-
-const authRoutes = require(’./routes/auth’);
-const shopRoutes = require(’./routes/shop’);
-const adminRoutes = require(’./routes/admin’);
-const stripeRoutes = require(’./routes/stripe’);
-const { setupGameSockets } = require(’./sockets/game’);
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const http = require('http');
+const { Server } = require('socket.io');
+require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-cors: { origin: ‘*’, methods: [‘GET’, ‘POST’] }
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
+// Middleware
 app.use(cors());
-// Stripe webhook needs raw body
-app.use(’/api/stripe/webhook’, express.raw({ type: ‘application/json’ }));
 app.use(express.json());
 
-// Routes
-app.use(’/api/auth’, authRoutes);
-app.use(’/api/shop’, shopRoutes);
-app.use(’/api/admin’, adminRoutes);
-app.use(’/api/stripe’, stripeRoutes);
+// Routes - חיבור הקבצים שהעלית
+app.use('/auth', require('./routes/auth'));
+app.use('/shop', require('./routes/shop'));
+app.use('/stripe', require('./routes/stripe'));
 
-app.get(’/health’, (req, res) => res.json({ status: ‘ok’, time: new Date() }));
+// MongoDB Connection
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('✅ MongoDB connected successfully'))
+  .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// Connect DB
-mongoose.connect(process.env.MONGO_URI || ‘mongodb://localhost:27017/gladiator’)
-.then(() => console.log(‘✅ MongoDB connected’))
-.catch(err => console.error(‘❌ MongoDB error:’, err));
-
-// Socket.io game
-setupGameSockets(io);
+// Sockets
+require('./sockets/game')(io);
 
 const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => console.log(`🏟️ Gladiator server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
