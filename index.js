@@ -9,24 +9,19 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Routes - חיבור הקבצים שהעלית
-app.use('/auth', require('./routes/auth'));
-app.use('/shop', require('./routes/shop'));
-app.use('/stripe', require('./routes/stripe'));
+// שינוי הנתיב ל-api כפי שהקוד שלך מצפה
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/shop', require('./routes/shop'));
+app.use('/api/stripe', require('./routes/stripe'));
 
-// MongoDB Connection
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('✅ MongoDB connected successfully'))
-  .catch(err => console.error('❌ MongoDB connection error:', err));
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch(err => console.log('❌ DB Error:', err));
 
-// Sockets
 require('./sockets/game')(io);
 
 const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+server.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
