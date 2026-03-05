@@ -3,40 +3,33 @@ const router = express.Router();
 const { Player } = require('../models');
 const jwt = require('jsonwebtoken');
 
-// נתיב להרשמה
 router.post('/register', async (req, res) => {
   try {
-    const { userId, name, className, stats } = req.body;
-    
-    // בדיקה אם השחקן כבר קיים
-    let player = await Player.findOne({ userId });
-    if (player) return res.status(400).json({ error: 'Player already exists' });
-
-    player = new Player({
-      userId,
-      name,
-      class: className,
-      stats,
-      inventory: [],
-      equipment: { weapon: null, armor: null }
+    const { username, password, gladiatorClass, email } = req.body;
+    const player = new Player({
+      username,
+      password, // במציאות כדאי להצפין, אבל כרגע נשמור על פשטות
+      email,
+      gladiator: {
+        name: username,
+        class: gladiatorClass,
+        baseStats: { hp: 100, attack: 10, defense: 10, speed: 10, critChance: 5 }
+      }
     });
-
     await player.save();
-    const token = jwt.sign({ userId }, process.env.JWT_SECRET);
+    const token = jwt.sign({ id: player._id }, process.env.JWT_SECRET || 'secret');
     res.json({ player, token });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'שם משתמש כבר קיים או שגיאת מערכת' });
   }
 });
 
-// נתיב לכניסה (Login)
 router.post('/login', async (req, res) => {
   try {
-    const { userId } = req.body;
-    const player = await Player.findOne({ userId });
-    if (!player) return res.status(404).json({ error: 'Player not found' });
-    
-    const token = jwt.sign({ userId }, process.env.JWT_SECRET);
+    const { username, password } = req.body;
+    const player = await Player.findOne({ username, password });
+    if (!player) return res.status(401).json({ error: 'פרטים שגויים' });
+    const token = jwt.sign({ id: player._id }, process.env.JWT_SECRET || 'secret');
     res.json({ player, token });
   } catch (err) {
     res.status(500).json({ error: err.message });
