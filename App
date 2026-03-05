@@ -1,0 +1,708 @@
+import React, { useState, useEffect, useRef, useCallback } from ‘react’;
+import { io } from ‘socket.io-client’;
+import axios from ‘axios’;
+
+const API = process.env.REACT_APP_API_URL || ‘’;
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || ‘http://localhost:4000’;
+
+// ── AXIOS HELPER ─────────────────────────────────
+const api = axios.create({ baseURL: API + ‘/api’ });
+api.interceptors.request.use(cfg => {
+const token = localStorage.getItem(‘token’);
+if (token) cfg.headers.Authorization = `Bearer ${token}`;
+return cfg;
+});
+
+// ── SKILLS DATA ──────────────────────────────────
+const SKILLS_DATA = [
+{ id:‘power_strike’,  name:‘מכה עוצמתית’, icon:‘💥’, desc:‘200% נזק’, cooldown:3, mpCost:20 },
+{ id:‘shield_bash’,   name:‘הכאת מגן’,    icon:‘🛡️’, desc:‘מדלג תור יריב’, cooldown:4, mpCost:25 },
+{ id:‘battle_cry’,    name:‘זעקת קרב’,    icon:‘📣’, desc:’+50% תקיפה’, cooldown:4, mpCost:15 },
+{ id:‘second_wind’,   name:‘רוח שנייה’,   icon:‘💨’, desc:‘מחזיר 30% HP’, cooldown:5, mpCost:30 },
+{ id:‘precise_strike’,name:‘מכה מדויקת’, icon:‘🎯’, desc:‘100% קריטי’, cooldown:3, mpCost:20 },
+{ id:‘arena_roar’,    name:‘שאגת הזירה’,  icon:‘🦁’, desc:’-30% הגנת יריב’, cooldown:3, mpCost:18 },
+];
+
+const CLASSES = [
+{ id:‘murmillo’,  name:‘מורמילו’,  icon:‘🛡️’, desc:‘מגן כבד - HP גבוה’,   stats:{hp:130,attack:12,defense:10,speed:6, critChance:8} },
+{ id:‘retiarius’, name:‘רטיאריוס’, icon:‘🎣’, desc:‘מהיר - תקיפה גבוהה’,  stats:{hp:90, attack:16,defense:5, speed:12,critChance:15} },
+{ id:‘secutor’,   name:‘סקוטור’,   icon:‘⚔️’, desc:‘מאוזן - טוב בהכל’,   stats:{hp:110,attack:14,defense:8, speed:9, critChance:10} },
+];
+
+const XP_PER_LEVEL = (lvl) => Math.floor(100 * Math.pow(1.5, lvl - 1));
+
+// ════════════════════════════════════════════════════
+//  STYLES
+// ════════════════════════════════════════════════════
+const S = `
+@import url(‘https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&family=Lato:wght@300;400;700&display=swap’);
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0b09;font-family:‘Lato’,sans-serif;color:#e8d5b0;direction:rtl}
+:root{
+–gold:#c9973d;–gold-l:#f0c060;–gold-d:#7a5a1a;
+–blood:#8b1a1a;–blood-l:#c0392b;
+–bg:#0d0b09;–bg2:#1a1512;–bg3:#252018;–bg4:#302820;
+–border:#3a3020;–text:#e8d5b0;–dim:#9a8060;
+–hp:#e74c3c;–mp:#3498db;–xp:#f39c12;
+–green:#27ae60;–warn:#e67e22;
+}
+.app{min-height:100vh;background:var(–bg)}
+
+/* AUTH */
+.auth-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;
+background:radial-gradient(ellipse at 50% 30%,#1a1008 0%,#0a0806 70%)}
+.auth-box{background:var(–bg2);border:1px solid var(–gold-d);border-radius:12px;
+padding:40px;width:100%;max-width:420px;text-align:center}
+.logo{font-family:‘Cinzel’,serif;font-size:2.2rem;font-weight:900;color:var(–gold-l);
+text-shadow:0 0 30px #c9973d66;margin-bottom:4px}
+.logo-sub{color:var(–dim);font-size:.9rem;letter-spacing:2px;margin-bottom:30px}
+.field{width:100%;padding:10px 14px;background:var(–bg3);border:1px solid var(–border);
+border-radius:6px;color:var(–text);font-family:‘Lato’,sans-serif;font-size:1rem;
+margin-bottom:12px;outline:none;text-align:right}
+.field:focus{border-color:var(–gold-d)}
+.field-label{display:block;text-align:right;font-size:.85rem;color:var(–dim);margin-bottom:4px}
+
+/* BUTTONS */
+.btn{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;font-family:‘Lato’,sans-serif;
+font-size:.95rem;font-weight:700;transition:all .2s;letter-spacing:.5px}
+.btn-gold{background:linear-gradient(135deg,#7a5a1a,#c9973d,#7a5a1a);color:#1a0f00;border:1px solid var(–gold-d)}
+.btn-gold:hover{background:linear-gradient(135deg,#c9973d,#f0c060,#c9973d);transform:translateY(-1px);box-shadow:0 4px 16px #c9973d44}
+.btn-blood{background:linear-gradient(135deg,#5a0a0a,#8b1a1a);color:var(–text);border:1px solid #5a1010}
+.btn-blood:hover{background:linear-gradient(135deg,#8b1a1a,#c0392b)}
+.btn-dark{background:var(–bg4);color:var(–text);border:1px solid var(–border)}
+.btn-dark:hover{background:#3a2e20}
+.btn-green{background:linear-gradient(135deg,#1a5a2a,#27ae60);color:#fff;border:1px solid #1a5a2a}
+.btn-green:hover{background:linear-gradient(135deg,#27ae60,#2ecc71)}
+.btn-sm{padding:6px 14px;font-size:.82rem}
+.btn-xs{padding:4px 10px;font-size:.78rem}
+.btn:disabled{opacity:.35;cursor:not-allowed;transform:none!important}
+.btn-full{width:100%}
+
+/* LAYOUT */
+.nav{display:flex;align-items:center;gap:8px;padding:10px 20px;
+background:var(–bg2);border-bottom:1px solid var(–border);flex-wrap:wrap}
+.nav-logo{font-family:‘Cinzel’,serif;font-size:1.1rem;color:var(–gold-l);margin-left:auto}
+.nav-coins{background:var(–bg3);border:1px solid var(–gold-d);padding:5px 12px;border-radius:20px;
+font-size:.85rem;color:var(–gold-l);font-weight:700}
+.nav-gold{background:var(–bg3);border:1px solid #5a4a20;padding:5px 12px;border-radius:20px;
+font-size:.85rem;color:#c9973d}
+.page{max-width:960px;margin:0 auto;padding:20px}
+.page-title{font-family:‘Cinzel’,serif;font-size:1.5rem;color:var(–gold);margin-bottom:20px;
+padding-bottom:10px;border-bottom:1px solid var(–border)}
+
+/* CARDS */
+.card{background:var(–bg2);border:1px solid var(–border);border-radius:10px;padding:20px}
+.card-title{font-family:‘Cinzel’,serif;font-size:.95rem;color:var(–gold);margin-bottom:12px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+
+/* STAT BAR */
+.sbar{margin-bottom:6px}
+.sbar-label{font-size:.78rem;color:var(–dim);margin-bottom:2px;display:flex;justify-content:space-between}
+.sbar-bg{background:#1a1410;border-radius:4px;height:8px;overflow:hidden}
+.sbar-fill{height:100%;border-radius:4px;transition:width .4s}
+
+/* HERO CARD */
+.hero-card{background:var(–bg2);border:1px solid var(–gold-d);border-radius:12px;padding:24px;
+text-align:center}
+.hero-icon{font-size:4rem;margin-bottom:8px}
+.hero-name{font-family:‘Cinzel’,serif;font-size:1.3rem;color:var(–gold-l)}
+.hero-class{font-size:.85rem;color:var(–dim);margin-bottom:12px}
+.hero-level{font-size:2rem;font-weight:700;color:var(–gold);margin:4px 0}
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.78rem;font-weight:700}
+.badge-gold{background:#2a1f05;color:var(–gold-l);border:1px solid var(–gold-d)}
+.badge-blood{background:#2a0505;color:#e74c3c;border:1px solid #5a1010}
+.badge-blue{background:#051a2a;color:#3498db;border:1px solid #0a3a5a}
+
+/* COMBAT */
+.arena-bg{background:radial-gradient(ellipse at center,#1a1008 0%,#0d0b09 80%);
+border:2px solid var(–gold-d);border-radius:14px;padding:24px;margin-bottom:16px}
+.fighters{display:grid;grid-template-columns:1fr 80px 1fr;gap:12px;align-items:center;margin-bottom:20px}
+.fighter{background:var(–bg2);border:1px solid var(–border);border-radius:10px;padding:16px;text-align:center;
+transition:border-color .3s}
+.fighter.active-turn{border-color:var(–gold-l);box-shadow:0 0 20px #c9973d22}
+.fighter-icon{font-size:2.5rem;margin-bottom:6px}
+.fighter-name{font-family:‘Cinzel’,serif;font-size:.85rem;color:var(–gold);margin-bottom:8px}
+.vs{font-family:‘Cinzel’,serif;font-size:1.6rem;color:var(–blood-l);text-shadow:0 0 20px #8b1a1a;text-align:center}
+.action-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.skill-btn{display:flex;align-items:center;gap:5px;padding:7px 12px;background:var(–bg3);
+border:1px solid var(–border);border-radius:6px;cursor:pointer;color:var(–text);
+font-size:.85rem;font-family:‘Lato’,sans-serif;transition:all .2s;position:relative}
+.skill-btn:hover:not(:disabled){border-color:var(–gold);background:var(–bg4)}
+.skill-btn:disabled{opacity:.4;cursor:not-allowed}
+.skill-cd{position:absolute;top:-6px;right:-6px;background:var(–blood);color:#fff;
+border-radius:50%;width:18px;height:18px;font-size:.68rem;display:flex;align-items:center;justify-content:center;font-weight:700}
+.combat-log{background:var(–bg);border:1px solid var(–border);border-radius:8px;
+padding:12px;height:160px;overflow-y:auto;font-size:.84rem;line-height:1.6}
+.log-line{color:var(–dim);border-bottom:1px solid #1a1610;padding:2px 0}
+.log-line:first-child{color:var(–text)}
+
+/* SHOP */
+.shop-item{background:var(–bg2);border:1px solid var(–border);border-radius:10px;padding:16px;
+display:flex;flex-direction:column;gap:8px}
+.shop-item:hover{border-color:var(–gold-d)}
+.shop-icon{font-size:2rem;text-align:center;margin-bottom:4px}
+.shop-name{font-family:‘Cinzel’,serif;font-size:.9rem;color:var(–gold);text-align:center}
+.shop-desc{font-size:.8rem;color:var(–dim);text-align:center;flex:1}
+.shop-price{display:flex;justify-content:center;gap:6px;align-items:center}
+.price-coin{color:var(–gold-l);font-weight:700;font-size:.9rem}
+.price-gold{color:#c9973d;font-size:.9rem}
+.tab-bar{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(–border);padding-bottom:0}
+.tab{padding:8px 18px;background:none;border:none;color:var(–dim);cursor:pointer;
+font-family:‘Lato’,sans-serif;font-size:.9rem;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.active{color:var(–gold);border-bottom-color:var(–gold)}
+
+/* LEADERBOARD */
+.lb-row{display:flex;align-items:center;gap:12px;padding:10px 14px;
+background:var(–bg2);border:1px solid var(–border);border-radius:8px;margin-bottom:6px}
+.lb-rank{font-family:‘Cinzel’,serif;font-size:1.1rem;color:var(–gold);width:30px}
+.lb-name{flex:1;font-weight:700}
+.lb-stat{font-size:.85rem;color:var(–dim)}
+
+/* CLASS SELECT */
+.class-card{background:var(–bg2);border:2px solid var(–border);border-radius:10px;
+padding:20px;cursor:pointer;text-align:center;transition:all .2s}
+.class-card:hover,.class-card.sel{border-color:var(–gold-l);background:#1f1a0d;box-shadow:0 0 20px #c9973d22}
+.class-card-icon{font-size:3rem;margin-bottom:8px}
+.class-card-name{font-family:‘Cinzel’,serif;font-size:1rem;color:var(–gold-l);margin-bottom:6px}
+.stat-chip{display:inline-flex;align-items:center;gap:4px;background:var(–bg3);
+border:1px solid var(–border);border-radius:4px;padding:2px 8px;font-size:.78rem;margin:2px}
+
+/* NOTIF */
+.notif{position:fixed;top:16px;left:50%;transform:translateX(-50%);
+padding:10px 24px;border-radius:8px;font-weight:700;z-index:999;
+animation:slideDown .3s ease;font-size:.95rem}
+.notif-success{background:#1a4a2a;color:#2ecc71;border:1px solid #27ae60}
+.notif-warn{background:#3a1a05;color:#f39c12;border:1px solid #e67e22}
+.notif-info{background:#1a1a3a;color:#74b9ff;border:1px solid #3498db}
+.notif-error{background:#3a0a0a;color:#e74c3c;border:1px solid #c0392b}
+@keyframes slideDown{from{opacity:0;transform:translateX(-50%) translateY(-20px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* QUEUE */
+.queue-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:20px}
+.queue-spinner{font-size:4rem;animation:spin 2s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.queue-text{font-family:‘Cinzel’,serif;font-size:1.3rem;color:var(–gold)}
+
+/* GAMEOVER */
+.gameover-wrap{text-align:center;padding:40px}
+.gameover-title{font-family:‘Cinzel’,serif;font-size:2.5rem;margin-bottom:12px}
+.gameover-win{color:var(–gold-l);text-shadow:0 0 30px #c9973d88}
+.gameover-lose{color:var(–blood-l)}
+.reward-row{display:flex;justify-content:center;gap:16px;margin:16px 0;flex-wrap:wrap}
+.reward-item{background:var(–bg3);border:1px solid var(–border);border-radius:8px;padding:12px 20px;text-align:center}
+.reward-val{font-size:1.4rem;font-weight:700;color:var(–gold)}
+.reward-label{font-size:.8rem;color:var(–dim)}
+
+/* RESPONSIVE */
+@media(max-width:640px){.grid-2,.grid-3{grid-template-columns:1fr}.fighters{grid-template-columns:1fr 40px 1fr}}
+`;
+
+// ════════════════════════════════════════════════════
+//  COMPONENTS
+// ════════════════════════════════════════════════════
+
+const StatBar = ({ value, max, color, label }) => (
+
+  <div className="sbar">
+    <div className="sbar-label"><span>{label}</span><span>{value}/{max}</span></div>
+    <div className="sbar-bg">
+      <div className="sbar-fill" style={{ width: `${Math.max(0, (value / max) * 100)}%`, background: color }} />
+    </div>
+  </div>
+);
+
+const Notif = ({ msg, type }) => msg ? (
+
+  <div className={`notif notif-${type}`}>{msg}</div>
+) : null;
+
+// ════════════════════════════════════════════════════
+//  MAIN APP
+// ════════════════════════════════════════════════════
+export default function App() {
+const [screen, setScreen] = useState(‘auth’);  // auth | classSelect | hub | queue | combat | shop | leaderboard | paySuccess
+const [authMode, setAuthMode] = useState(‘login’);
+const [player, setPlayer] = useState(null);
+const [socket, setSocket] = useState(null);
+const [gameState, setGameState] = useState(null);
+const [gameLog, setGameLog] = useState([]);
+const [gameOver, setGameOver] = useState(null);
+const [myIndex, setMyIndex] = useState(0);
+const [shopItems, setShopItems] = useState([]);
+const [leaderboard, setLeaderboard] = useState([]);
+const [notif, setNotif] = useState(null);
+const [loading, setLoading] = useState(false);
+const [shopTab, setShopTab] = useState(‘weapon’);
+const logRef = useRef(null);
+
+const notify = useCallback((msg, type = ‘info’) => {
+setNotif({ msg, type });
+setTimeout(() => setNotif(null), 3000);
+}, []);
+
+// ── SOCKET ──────────────────────────────────────
+useEffect(() => {
+const token = localStorage.getItem(‘token’);
+if (!token) return;
+
+```
+const sock = io(SOCKET_URL, { transports: ['websocket'] });
+setSocket(sock);
+
+sock.on('connect', () => {
+  sock.emit('auth', { token });
+});
+sock.on('auth_ok', () => console.log('Socket authenticated'));
+sock.on('match_found', ({ gameId, yourIndex }) => {
+  setMyIndex(yourIndex);
+  setGameOver(null);
+  setGameLog([]);
+  setScreen('combat');
+});
+sock.on('in_queue', ({ position }) => notify(`בתור... מקום ${position}`, 'info'));
+sock.on('queue_cancelled', () => setScreen('hub'));
+sock.on('game_state', (state) => setGameState(state));
+sock.on('game_log', (lines) => setGameLog(prev => [...lines.reverse(), ...prev]));
+sock.on('game_over', (data) => setGameOver(data));
+sock.on('not_your_turn', () => notify('לא התורך!', 'warn'));
+sock.on('skill_on_cooldown', ({ cd }) => notify(`מיומנות בהתאוששות עוד ${cd} תורות`, 'warn'));
+sock.on('not_enough_mp', () => notify('אין מספיק MP!', 'warn'));
+sock.on('no_potions', () => notify('אין לך כוסות ריפוי!', 'warn'));
+
+return () => sock.disconnect();
+```
+
+}, []);
+
+useEffect(() => {
+if (logRef.current) logRef.current.scrollTop = 0;
+}, [gameLog]);
+
+// ── AUTH ─────────────────────────────────────────
+const [form, setForm] = useState({ username: ‘’, email: ‘’, password: ‘’, classId: ‘secutor’ });
+
+const handleAuth = async () => {
+setLoading(true);
+try {
+if (authMode === ‘register’) {
+const res = await api.post(’/auth/register’, {
+username: form.username, email: form.email,
+password: form.password, gladiatorClass: form.classId,
+});
+localStorage.setItem(‘token’, res.data.token);
+setPlayer(res.data.player);
+socket?.emit(‘auth’, { token: res.data.token });
+setScreen(‘hub’);
+} else {
+const res = await api.post(’/auth/login’, { username: form.username, password: form.password });
+localStorage.setItem(‘token’, res.data.token);
+setPlayer(res.data.player);
+socket?.emit(‘auth’, { token: res.data.token });
+setScreen(‘hub’);
+}
+} catch (err) {
+notify(err.response?.data?.error || ‘שגיאה’, ‘error’);
+}
+setLoading(false);
+};
+
+const logout = () => {
+localStorage.removeItem(‘token’);
+setPlayer(null);
+setSocket(null);
+setScreen(‘auth’);
+};
+
+const refreshPlayer = async () => {
+try {
+const res = await api.get(’/auth/me’);
+setPlayer(res.data);
+} catch {}
+};
+
+// ── SHOP ─────────────────────────────────────────
+const loadShop = async () => {
+try {
+const res = await api.get(’/shop’);
+setShopItems(res.data);
+} catch {}
+};
+
+const buyItem = async (item, currency) => {
+try {
+if (currency === ‘stripe’) {
+const res = await api.post(’/stripe/create-checkout’, { itemId: item.id });
+window.location.href = res.data.url;
+return;
+}
+const endpoint = currency === ‘coins’ ? ‘/shop/buy/coins’ : ‘/shop/buy/gold’;
+const res = await api.post(endpoint, { itemId: item.id });
+setPlayer(res.data.player);
+notify(res.data.message, ‘success’);
+} catch (err) {
+notify(err.response?.data?.error || ‘שגיאה’, ‘error’);
+}
+};
+
+// ── LEADERBOARD ───────────────────────────────────
+const loadLeaderboard = async () => {
+try {
+const res = await api.get(’/admin/stats’);
+setLeaderboard(res.data.topPlayers || []);
+} catch {}
+};
+
+// ── COMBAT ACTIONS ────────────────────────────────
+const sendAction = (action, skillId = null) => {
+if (!socket || !gameState) return;
+socket.emit(‘combat_action’, { gameId: gameState.id, action, skillId });
+};
+
+const surrender = () => {
+if (!socket || !gameState) return;
+socket.emit(‘surrender’, { gameId: gameState.id });
+};
+
+const isMyTurn = gameState && !gameState.over && gameState.turn === myIndex;
+const me = gameState?.players?.[myIndex];
+const enemy = gameState?.players?.[1 - myIndex];
+
+// ════════════════════════════════════════════════════
+//  SCREENS
+// ════════════════════════════════════════════════════
+
+const renderAuth = () => (
+<div className="auth-wrap">
+<div className="auth-box">
+<div className="logo">⚔️ GLADIATOR</div>
+<div className="logo-sub">ONLINE ARENA</div>
+
+```
+    {authMode === 'register' && (
+      <>
+        <p style={{color:'var(--gold)',fontFamily:'Cinzel',marginBottom:16}}>בחר מחלקה</p>
+        <div className="grid-3" style={{marginBottom:16}}>
+          {CLASSES.map(cls => (
+            <div key={cls.id} className={`class-card ${form.classId === cls.id ? 'sel' : ''}`}
+              onClick={() => setForm(f => ({...f, classId: cls.id}))}>
+              <div className="class-card-icon">{cls.icon}</div>
+              <div className="class-card-name">{cls.name}</div>
+              <div style={{fontSize:'.75rem',color:'var(--dim)'}}>{cls.desc}</div>
+            </div>
+          ))}
+        </div>
+        <label className="field-label">שם משתמש</label>
+        <input className="field" placeholder="שם משתמש" value={form.username}
+          onChange={e => setForm(f => ({...f, username: e.target.value}))} />
+        <label className="field-label">אימייל</label>
+        <input className="field" placeholder="אימייל" type="email" value={form.email}
+          onChange={e => setForm(f => ({...f, email: e.target.value}))} />
+      </>
+    )}
+    {authMode === 'login' && (
+      <>
+        <label className="field-label">שם משתמש</label>
+        <input className="field" placeholder="שם משתמש" value={form.username}
+          onChange={e => setForm(f => ({...f, username: e.target.value}))} />
+      </>
+    )}
+    <label className="field-label">סיסמה</label>
+    <input className="field" placeholder="סיסמה" type="password" value={form.password}
+      onChange={e => setForm(f => ({...f, password: e.target.value}))}
+      onKeyDown={e => e.key === 'Enter' && handleAuth()} />
+
+    <button className="btn btn-gold btn-full" onClick={handleAuth} disabled={loading} style={{marginTop:8}}>
+      {loading ? '...' : authMode === 'login' ? '⚔️ כניסה לזירה' : '🛡️ הצטרף לזירה'}
+    </button>
+    <div style={{marginTop:16,color:'var(--dim)',fontSize:'.85rem'}}>
+      {authMode === 'login' ? 'אין לך חשבון? ' : 'כבר יש לך חשבון? '}
+      <span style={{color:'var(--gold)',cursor:'pointer'}} onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}>
+        {authMode === 'login' ? 'הירשם' : 'התחבר'}
+      </span>
+    </div>
+  </div>
+</div>
+```
+
+);
+
+const renderNav = () => (
+<nav className="nav">
+<button className=“btn btn-dark btn-sm” onClick={() => { setScreen(‘hub’); }}>🏠 בסיס</button>
+<button className=“btn btn-dark btn-sm” onClick={() => { setScreen(‘shop’); loadShop(); }}>🏪 חנות</button>
+<button className=“btn btn-dark btn-sm” onClick={() => { setScreen(‘leaderboard’); loadLeaderboard(); }}>🏆 טבלה</button>
+{player?.isAdmin && <button className=“btn btn-blood btn-sm” onClick={() => window.open(’/admin’,’_blank’)}>👑 אדמין</button>}
+<div className="nav-logo">⚔️ GLADIATOR</div>
+<div className="nav-coins">🪙 {player?.coins || 0}</div>
+<div className="nav-gold">💰 {player?.gold || 0}</div>
+<button className="btn btn-dark btn-sm" onClick={logout}>יציאה</button>
+</nav>
+);
+
+const renderHub = () => {
+if (!player) return null;
+const g = player.gladiator;
+const xpNeeded = XP_PER_LEVEL(g.level);
+return (
+<>
+{renderNav()}
+<div className="page">
+<div className="grid-2" style={{marginBottom:20}}>
+<div className="hero-card">
+<div className="hero-icon">{g.icon}</div>
+<div className="hero-name">{g.name}</div>
+<div className="hero-class">{CLASSES.find(c=>c.id===g.class)?.name} • רמה {g.level}</div>
+<div className="hero-level">{g.level}</div>
+<StatBar value={g.xp} max={xpNeeded} color="var(--xp)" label="XP" />
+<div style={{marginTop:12,display:‘flex’,gap:8,justifyContent:‘center’,flexWrap:‘wrap’}}>
+<span className="badge badge-gold">🏆 {player.wins}W</span>
+<span className="badge badge-blood">💀 {player.losses}L</span>
+<span className="badge badge-blue">📊 {player.rank || 1000}</span>
+</div>
+</div>
+<div className="card">
+<div className="card-title">סטטיסטיקות</div>
+{[
+[‘⚔️ תקיפה’,    g.baseStats.attack + (g.weapon?.bonus?.attack||0)],
+[‘🛡️ הגנה’,    g.baseStats.defense + (g.armor?.bonus?.defense||0)],
+[‘❤️ HP מקס’,  g.baseStats.hp + (g.armor?.bonus?.hp||0)],
+[‘⚡ מהירות’,   g.baseStats.speed],
+[‘🎯 קריטי’,   (g.baseStats.critChance + (g.weapon?.bonus?.critChance||0)) + ‘%’],
+].map(([label, val]) => (
+<div key={label} style={{display:‘flex’,justifyContent:‘space-between’,padding:‘5px 0’,borderBottom:‘1px solid var(–border)’}}>
+<span style={{color:‘var(–dim)’,fontSize:’.88rem’}}>{label}</span>
+<span style={{color:‘var(–gold)’,fontWeight:700}}>{val}</span>
+</div>
+))}
+<div style={{marginTop:12}}>
+<div style={{fontSize:’.8rem’,color:‘var(–dim)’}}>נשק: {g.weapon?.name} {g.weapon?.icon}</div>
+<div style={{fontSize:’.8rem’,color:‘var(–dim)’}}>שריון: {g.armor?.name} {g.armor?.icon}</div>
+{g.talentPoints > 0 && <div style={{marginTop:8}} className="badge badge-gold">✨ {g.talentPoints} נקודות כישרון!</div>}
+</div>
+</div>
+</div>
+
+```
+      <div style={{textAlign:'center',padding:'30px 0'}}>
+        <button className="btn btn-blood" style={{fontSize:'1.2rem',padding:'16px 48px'}}
+          onClick={() => {
+            socket?.emit('find_match');
+            setScreen('queue');
+          }}>
+          ⚔️ כניסה לזירה!
+        </button>
+        <div style={{marginTop:10,color:'var(--dim)',fontSize:'.85rem'}}>חפש יריב אמיתי לקרב</div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">מיומנויות מצוידות</div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          {(g.equippedSkills || []).map(sid => {
+            const sk = SKILLS_DATA.find(s => s.id === sid);
+            return sk ? (
+              <div key={sid} style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 14px',fontSize:'.85rem'}}>
+                {sk.icon} {sk.name} <span style={{color:'var(--dim)',fontSize:'.75rem'}}>({sk.mpCost} MP)</span>
+              </div>
+            ) : null;
+          })}
+          {(!g.equippedSkills?.length) && <span style={{color:'var(--dim)'}}>אין מיומנויות מצוידות - קנה בחנות!</span>}
+        </div>
+      </div>
+    </div>
+  </>
+);
+```
+
+};
+
+const renderQueue = () => (
+<>
+{renderNav()}
+<div className="queue-wrap">
+<div className="queue-spinner">⚔️</div>
+<div className="queue-text">מחפש יריב…</div>
+<div style={{color:‘var(–dim)’}}>ממתין לשחקן אחר להתחבר לזירה</div>
+<button className=“btn btn-dark” onClick={() => { socket?.emit(‘cancel_queue’); setScreen(‘hub’); }}>❌ ביטול</button>
+</div>
+</>
+);
+
+const renderCombat = () => {
+if (!gameState) return <div className="queue-wrap"><div className="queue-spinner">⚔️</div><div className="queue-text">טוען קרב…</div></div>;
+if (gameOver) return renderGameOver();
+
+```
+return (
+  <>
+    {renderNav()}
+    <div className="page">
+      <div className="arena-bg">
+        <div style={{textAlign:'center',marginBottom:12,color:'var(--dim)',fontSize:'.85rem'}}>
+          תור {gameState.turnNumber} • {isMyTurn ? <span style={{color:'var(--gold)'}}>🟢 התורך!</span> : <span style={{color:'var(--blood-l)'}}>🔴 תור {enemy?.username}</span>}
+        </div>
+        <div className="fighters">
+          <div className={`fighter ${isMyTurn ? 'active-turn' : ''}`}>
+            <div className="fighter-icon">{me?.icon || '⚔️'}</div>
+            <div className="fighter-name">{me?.username} (אתה)</div>
+            <StatBar value={me?.currentHp || 0} max={me?.maxHp || 1} color="var(--hp)" label="HP" />
+            <StatBar value={me?.mp || 0} max={me?.maxMp || 80} color="var(--mp)" label="MP" />
+          </div>
+          <div className="vs">VS</div>
+          <div className={`fighter ${!isMyTurn ? 'active-turn' : ''}`}>
+            <div className="fighter-icon">{enemy?.icon || '👹'}</div>
+            <div className="fighter-name">{enemy?.username}</div>
+            <StatBar value={enemy?.currentHp || 0} max={enemy?.maxHp || 1} color="var(--hp)" label="HP" />
+            <StatBar value={enemy?.mp || 0} max={enemy?.maxMp || 80} color="var(--mp)" label="MP" />
+          </div>
+        </div>
+
+        <div className="action-bar">
+          <button className="btn btn-blood btn-sm" disabled={!isMyTurn} onClick={() => sendAction('attack')}>
+            ⚔️ תקיפה
+          </button>
+          {(me?.equippedSkills || []).map(sid => {
+            const sk = SKILLS_DATA.find(s => s.id === sid);
+            if (!sk) return null;
+            const cd = me?.skillCooldowns?.[sid] || 0;
+            return (
+              <button key={sid} className="skill-btn" disabled={!isMyTurn || cd > 0 || (me?.mp || 0) < sk.mpCost}
+                onClick={() => sendAction('attack', sid)}>
+                {cd > 0 && <span className="skill-cd">{cd}</span>}
+                {sk.icon} {sk.name}
+                <span style={{color:'var(--dim)',fontSize:'.75rem'}}>{sk.mpCost}MP</span>
+              </button>
+            );
+          })}
+          <button className="btn btn-green btn-sm" disabled={!isMyTurn} onClick={() => sendAction('use_potion')}>
+            🧪 פולציה
+          </button>
+          <button className="btn btn-dark btn-sm" onClick={surrender}>🏳️ כניעה</button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">יומן קרב</div>
+        <div className="combat-log" ref={logRef}>
+          {gameLog.map((line, i) => (
+            <div key={i} className="log-line">{line}</div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </>
+);
+```
+
+};
+
+const renderGameOver = () => {
+const won = gameOver.winnerId === player?._id?.toString() || gameOver.winnerId === player?.id?.toString()
+|| gameOver.winnerName === player?.username;
+const myReward = won ? gameOver.rewards?.winner : gameOver.rewards?.loser;
+return (
+<>
+{renderNav()}
+<div className="page">
+<div className="card gameover-wrap">
+<div className={`gameover-title ${won ? 'gameover-win' : 'gameover-lose'}`}>
+{won ? ‘🏆 ניצחת!’ : ‘💀 הפסדת’}
+</div>
+<div style={{color:‘var(–dim)’,marginBottom:16}}>
+{won ? `${gameOver.loserName} נפל בפניך!` : `${gameOver.winnerName} ניצח`}
+</div>
+<div className="reward-row">
+<div className="reward-item"><div className="reward-val">+{myReward?.xp || 0}</div><div className="reward-label">XP</div></div>
+<div className="reward-item"><div className=“reward-val” style={{color:’#c9973d’}}>+{myReward?.gold || 0}</div><div className="reward-label">זהב</div></div>
+<div className="reward-item"><div className=“reward-val” style={{color: won?‘var(–gold)’:‘var(–blood-l)’}}>{won?’+’:’’}{myReward?.rank}</div><div className="reward-label">דירוג</div></div>
+</div>
+{myReward?.leveled && <div style={{color:‘var(–gold)’,fontFamily:‘Cinzel’,fontSize:‘1.2rem’,marginBottom:16}}>⬆️ עלית לרמה {myReward.newLevel}!</div>}
+<div style={{display:‘flex’,gap:12,justifyContent:‘center’,flexWrap:‘wrap’}}>
+<button className=“btn btn-blood” onClick={() => { refreshPlayer(); socket?.emit(‘find_match’); setScreen(‘queue’); }}>⚔️ קרב נוסף</button>
+<button className=“btn btn-gold” onClick={() => { refreshPlayer(); setScreen(‘hub’); }}>🏠 חזרה לבסיס</button>
+</div>
+</div>
+</div>
+</>
+);
+};
+
+const renderShop = () => {
+const tabs = [
+{ id:‘weapon’, label:‘🗡️ נשק’ },
+{ id:‘armor’,  label:‘🛡️ שריון’ },
+{ id:‘potion’, label:‘🧪 כוסות’ },
+{ id:‘coin_pack’, label:‘🪙 מטבעות’ },
+];
+const filtered = shopItems.filter(i => i.category === shopTab);
+return (
+<>
+{renderNav()}
+<div className="page">
+<div className="page-title">🏪 חנות הזירה</div>
+<div style={{display:‘flex’,gap:16,marginBottom:16,background:‘var(–bg2)’,border:‘1px solid var(–border)’,borderRadius:8,padding:12}}>
+<span>💰 זהב: <strong style={{color:‘var(–gold)’}}>{player?.gold || 0}</strong></span>
+<span>🪙 מטבעות: <strong style={{color:‘var(–gold-l)’}}>{player?.coins || 0}</strong></span>
+</div>
+<div className="tab-bar">
+{tabs.map(t => <button key={t.id} className={`tab ${shopTab===t.id?'active':''}`} onClick={()=>setShopTab(t.id)}>{t.label}</button>)}
+</div>
+<div className="grid-3">
+{filtered.map(item => (
+<div key={item.id} className="shop-item">
+<div className="shop-icon">{item.icon}</div>
+<div className="shop-name">{item.name}</div>
+<div className="shop-desc">{item.desc}</div>
+<div className="shop-price">
+{item.priceGold > 0 && <span className="price-gold">💰 {item.priceGold}</span>}
+{item.priceCoins > 0 && <span className="price-coin">🪙 {item.priceCoins}</span>}
+{item.realPrice > 0 && <span className="price-coin">${item.realPrice}</span>}
+</div>
+{item.category === ‘coin_pack’
+? <button className=“btn btn-gold btn-sm” onClick={() => buyItem(item, ‘stripe’)}>💳 רכישה</button>
+: item.priceCoins > 0
+? <button className=“btn btn-gold btn-sm” onClick={() => buyItem(item, ‘coins’)}>🪙 רכוש</button>
+: <button className=“btn btn-dark btn-sm” onClick={() => buyItem(item, ‘gold’)}>💰 רכוש</button>
+}
+</div>
+))}
+{filtered.length === 0 && <div style={{color:‘var(–dim)’,gridColumn:‘1/-1’,textAlign:‘center’,padding:40}}>טוען פריטים…</div>}
+</div>
+</div>
+</>
+);
+};
+
+const renderLeaderboard = () => (
+<>
+{renderNav()}
+<div className="page">
+<div className="page-title">🏆 טבלת הדירוג</div>
+{leaderboard.map((p, i) => (
+<div key={p._id} className="lb-row">
+<div className="lb-rank">{i === 0 ? ‘🥇’ : i === 1 ? ‘🥈’ : i === 2 ? ‘🥉’ : `#${i+1}`}</div>
+<div className="lb-name">{p.username}</div>
+<div className="lb-stat">רמה {p[‘gladiator.level’] || p.gladiator?.level || ‘?’}</div>
+<div className="lb-stat">🏆 {p.wins}W / 💀 {p.losses}L</div>
+<div className="badge badge-blue">📊 {p.rank}</div>
+</div>
+))}
+{!leaderboard.length && <div style={{color:‘var(–dim)’,textAlign:‘center’,padding:40}}>אין נתונים עדיין</div>}
+</div>
+</>
+);
+
+// ── MAIN RENDER ──────────────────────────────────
+return (
+<div className="app">
+<style>{S}</style>
+<Notif msg={notif?.msg} type={notif?.type} />
+{screen === ‘auth’        && renderAuth()}
+{screen === ‘hub’         && renderHub()}
+{screen === ‘queue’       && renderQueue()}
+{screen === ‘combat’      && renderCombat()}
+{screen === ‘shop’        && renderShop()}
+{screen === ‘leaderboard’ && renderLeaderboard()}
+</div>
+);
+}
